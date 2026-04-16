@@ -86,6 +86,7 @@ def health() -> HealthResponse:
     dependencies=[Depends(require_webhook_secret)],
 )
 def mp_build_tracker_job(payload: MPBuildTrackerRequest) -> MPBuildTrackerResponse:
+    logger.info("RAW PAYLOAD: %s", payload.model_dump(mode="json"))
     sample = payload.rows[:3]
     logger.info(
         "Received MPBuildTracker job",
