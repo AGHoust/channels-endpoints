@@ -86,6 +86,16 @@ def health() -> HealthResponse:
 )
 def mp_build_tracker_job(payload: dict) -> dict:
     logger.info("RAW PAYLOAD: %s", payload)
+    home_codes_raw = payload.get("home_codes", "")
+
+    home_codes = [
+        code.strip()
+        for code in home_codes_raw.split(",")
+        if code.strip()
+    ]
+
+    logger.info("Parsed %s home codes", len(home_codes))
+    logger.info("First 5 home codes: %s", home_codes[:5])
 
     # TODO: Google Sheets tracker logic will go here.
     # - Validate/transform rows as needed
