@@ -82,31 +82,17 @@ def health() -> HealthResponse:
 
 @app.post(
     "/jobs/MPBuildTracker",
-    response_model=MPBuildTrackerResponse,
     dependencies=[Depends(require_webhook_secret)],
 )
-def mp_build_tracker_job(payload: MPBuildTrackerRequest) -> MPBuildTrackerResponse:
-    logger.info("RAW PAYLOAD: %s", payload.model_dump(mode="json"))
-    sample = payload.rows[:3]
-    logger.info(
-        "Received MPBuildTracker job",
-        extra={
-            "run_date": payload.run_date.isoformat(),
-            "source": payload.source,
-            "rows_count": len(payload.rows),
-            "rows_sample": [row.model_dump() for row in sample],
-        },
-    )
+def mp_build_tracker_job(payload: dict) -> dict:
+    logger.info("RAW PAYLOAD: %s", payload)
 
     # TODO: Google Sheets tracker logic will go here.
     # - Validate/transform rows as needed
     # - Write/update the tracking sheet
     # - Handle retries / partial failures
 
-    received_at = datetime.now(UTC)
-    return MPBuildTrackerResponse(
-        status="ok",
-        message="Job received",
-        processed_rows=len(payload.rows),
-        received_at=received_at,
-    )
+    return {
+        "status": "ok",
+        "received": payload,
+    }
