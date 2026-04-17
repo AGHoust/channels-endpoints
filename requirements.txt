@@ -1,3 +1,5 @@
 fastapi
 uvicorn[standard]
 python-dotenv
+gspread
+google-auth
