@@ -5,6 +5,7 @@ import logging
 import os
 import secrets
 from datetime import UTC, date, datetime
+from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, Header, HTTPException, status
@@ -88,13 +89,11 @@ def health() -> HealthResponse:
     dependencies=[Depends(require_webhook_secret)],
 )
 def mp_build_tracker_job(payload: dict) -> dict:
-    logger.info("RAW PAYLOAD: %s", payload)
-
     def split_list(value: str) -> list[str]:
         return [x.strip() for x in str(value).split(",")]
 
     def parse_bool_list(value: str) -> list[bool]:
-        return [x.lower() == "true" for x in split_list(value)]
+        return [x.strip().lower() == "true" for x in split_list(value)]
 
     def parse_int_list(value: str) -> list[int]:
         parsed: list[int] = []
@@ -104,6 +103,46 @@ def mp_build_tracker_job(payload: dict) -> dict:
             except ValueError:
                 parsed.append(0)
         return parsed
+
+    def today_ddmmyyyy() -> str:
+        return datetime.now(ZoneInfo("Europe/London")).strftime("%d/%m/%Y")
+
+    def is_blank(value: str | None) -> bool:
+        return str(value or "").strip() == ""
+
+    def normalise_date_for_key(value: object) -> str | None:
+        if value is None:
+            return None
+        if isinstance(value, datetime):
+            return value.strftime("%d/%m/%Y")
+        if isinstance(value, date):
+            return value.strftime("%d/%m/%Y")
+
+        raw = str(value).strip()
+        if not raw:
+            return None
+
+        for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%Y/%m/%d"):
+            try:
+                return datetime.strptime(raw, fmt).strftime("%d/%m/%Y")
+            except ValueError:
+                pass
+
+        # Handle datetime-like strings: "2026-04-16T00:00:00Z", etc.
+        iso_candidate = raw.replace("Z", "+00:00")
+        try:
+            return datetime.fromisoformat(iso_candidate).strftime("%d/%m/%Y")
+        except ValueError:
+            pass
+
+        # Last resort: date part before a space.
+        date_token = raw.split(" ")[0]
+        for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%Y/%m/%d"):
+            try:
+                return datetime.strptime(date_token, fmt).strftime("%d/%m/%Y")
+            except ValueError:
+                pass
+        return None
 
     home_codes = split_list(payload.get("home_codes", ""))
     onboard_dates = split_list(payload.get("onboard_dates", ""))
@@ -126,6 +165,7 @@ def mp_build_tracker_job(payload: dict) -> dict:
         "googlevr_urls": len(googlevr_urls),
         "houststay_urls": len(houststay_urls),
     }
+    logger.info("Payload field lengths: %s", field_lengths)
     if len(set(field_lengths.values())) != 1:
         logger.error("Payload list-length mismatch: %s", field_lengths)
         raise HTTPException(
@@ -134,23 +174,37 @@ def mp_build_tracker_job(payload: dict) -> dict:
         )
 
     rows: list[dict[str, object]] = []
+    skipped_rows = 0
     for i in range(len(home_codes)):
+        home_code = home_codes[i].strip()
+        onboard_date_normalized = normalise_date_for_key(onboard_dates[i])
+        if not home_code or not onboard_dates[i].strip() or not onboard_date_normalized:
+            skipped_rows += 1
+            logger.warning(
+                "Skipping row %s due to blank/invalid key values (home_code=%r, onboard_date=%r)",
+                i,
+                home_code,
+                onboard_dates[i],
+            )
+            continue
+
         rows.append(
             {
-                "home_code": home_codes[i],
-                "onboard_date": onboard_dates[i],
+                "home_code": home_code,
+                "onboard_date": onboard_date_normalized,
                 "images": guesty_image_count[i],
                 "mp_active": mp_active[i],
-                "booking_url": booking_urls[i],
-                "homeaway_url": homeaway_urls[i],
-                "hometogo_url": hometogo_urls[i],
-                "googlevr_url": googlevr_urls[i],
-                "houststay_url": houststay_urls[i],
+                "booking_url": booking_urls[i].strip(),
+                "homeaway_url": homeaway_urls[i].strip(),
+                "hometogo_url": hometogo_urls[i].strip(),
+                "googlevr_url": googlevr_urls[i].strip(),
+                "houststay_url": houststay_urls[i].strip(),
             }
         )
 
-    logger.info("Built %s rows", len(rows))
-    logger.info("Sample row: %s", rows[0] if rows else "No rows")
+    logger.info("Valid parsed rows: %s", len(rows))
+    logger.info("Skipped rows: %s", skipped_rows)
+    logger.info("Sample parsed row: %s", rows[0] if rows else "No rows")
 
     sheet_url = os.getenv("MP_TRACKER_SHEET_URL", "")
     if not sheet_url:
@@ -171,22 +225,36 @@ def mp_build_tracker_job(payload: dict) -> dict:
     all_values = worksheet.get_all_values()
     start_row = 6
     lookup: dict[tuple[str, str], int] = {}
+    skipped_sheet_rows = 0
     for row_idx in range(start_row, len(all_values) + 1):
         row = all_values[row_idx - 1]
         home_code = row[0].strip() if len(row) > 0 else ""
-        onboard_date = row[1].strip() if len(row) > 1 else ""
-        if home_code and onboard_date:
-            lookup[(home_code, onboard_date)] = row_idx
+        onboard_date = row[1] if len(row) > 1 else ""
+        onboard_date_normalized = normalise_date_for_key(onboard_date)
+        if home_code and onboard_date_normalized:
+            key = (home_code, onboard_date_normalized)
+            if key in lookup:
+                logger.warning(
+                    "Duplicate sheet key detected for %s at row %s (previous row %s)",
+                    key,
+                    row_idx,
+                    lookup[key],
+                )
+            lookup[key] = row_idx
+        elif home_code or str(onboard_date).strip():
+            skipped_sheet_rows += 1
+    if skipped_sheet_rows:
+        logger.warning(
+            "Skipped %s sheet rows due to invalid/missing key date values",
+            skipped_sheet_rows,
+        )
 
-    today = date.today().isoformat()
+    today = today_ddmmyyyy()
 
     def ensure_len(row: list[str], size: int) -> list[str]:
         if len(row) < size:
             row.extend([""] * (size - len(row)))
         return row
-
-    def is_blank(value: str) -> bool:
-        return value.strip() == ""
 
     def bool_to_sheet(value: bool) -> str:
         return "TRUE" if value else "FALSE"
@@ -218,7 +286,7 @@ def mp_build_tracker_job(payload: dict) -> dict:
 
             row_a_to_n = [
                 str(row_data["home_code"]).strip(),        # A
-                str(row_data["onboard_date"]).strip(),     # B
+                str(row_data["onboard_date"]).strip(),     # B (DD/MM/YYYY)
                 str(row_data["images"]),                   # C
                 bool_to_sheet(bool(row_data["mp_active"])),  # D
                 bcom_url,                                  # E
