@@ -108,7 +108,8 @@ def mp_build_tracker_job(payload: dict) -> dict:
         return datetime.now(ZoneInfo("Europe/London")).strftime("%d/%m/%Y")
 
     def is_blank(value: str | None) -> bool:
-        return str(value or "").strip() == ""
+        v = str(value or "").strip().lower()
+        return v in ("", "none", "null")
 
     def normalise_date_for_key(value: object) -> str | None:
         if value is None:
@@ -219,7 +220,7 @@ def mp_build_tracker_job(payload: dict) -> dict:
         scopes=["https://www.googleapis.com/auth/spreadsheets"],
     )
     client = gspread.authorize(creds)
-    worksheet = client.open_by_url(sheet_url).worksheet("OKR 3 - Bcom Links")
+    worksheet = client.open_by_url(sheet_url).worksheet("NEW TAB NAME")
 
     # Read entire sheet into memory and build key lookup from tracker rows (start row 6).
     all_values = worksheet.get_all_values()
