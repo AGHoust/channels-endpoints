@@ -220,7 +220,7 @@ def mp_build_tracker_job(payload: dict) -> dict:
         scopes=["https://www.googleapis.com/auth/spreadsheets"],
     )
     client = gspread.authorize(creds)
-    worksheet = client.open_by_url(sheet_url).worksheet("NEW TAB NAME")
+    worksheet = client.open_by_url(sheet_url).worksheet("Sheet 19")
 
     # Read entire sheet into memory and build key lookup from tracker rows (start row 6).
     all_values = worksheet.get_all_values()
