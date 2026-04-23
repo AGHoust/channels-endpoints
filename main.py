@@ -90,7 +90,10 @@ def health() -> HealthResponse:
 )
 def mp_build_tracker_job(payload: dict) -> dict:
     def split_list(value: str) -> list[str]:
-        return [x.strip() for x in str(value).split(",")]
+        return [
+            "" if x.strip().lower() in ("none", "null") else x.strip()
+            for x in str(value).split(",")
+        ]
 
     def parse_bool_list(value: str) -> list[bool]:
         return [x.strip().lower() == "true" for x in split_list(value)]
