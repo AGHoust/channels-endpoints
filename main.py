@@ -223,7 +223,9 @@ def mp_build_tracker_job(payload: dict) -> dict:
         scopes=["https://www.googleapis.com/auth/spreadsheets"],
     )
     client = gspread.authorize(creds)
-    worksheet = client.open_by_url(sheet_url).worksheet("Sheet19")
+    spreadsheet = client.open_by_url(sheet_url)
+    worksheet = spreadsheet.worksheet("Sheet19")
+    image_log_worksheet = spreadsheet.worksheet("Image Change Log")
 
     # Read entire sheet into memory and build key lookup from tracker rows (start row 6).
     all_values = worksheet.get_all_values()
@@ -267,6 +269,7 @@ def mp_build_tracker_job(payload: dict) -> dict:
     append_live_updates: list[dict[str, object]] = []
     existing_row_updates: list[dict[str, object]] = []
     existing_live_updates: list[dict[str, object]] = []
+    image_change_log_rows: list[list[object]] = []
 
     new_rows_added = 0
     rows_updated = 0
@@ -321,10 +324,29 @@ def mp_build_tracker_job(payload: dict) -> dict:
         changed = False
 
         new_images = str(row_data["images"])
-        if existing_row[2].strip() != new_images:
+        old_images = existing_row[2].strip()
+
+        if old_images != new_images:
             existing_row[2] = new_images
             image_changes += 1
             changed = True
+
+            try:
+                change = int(new_images) - int(old_images or 0)
+            except ValueError:
+                change = ""
+
+            image_change_log_rows.append(
+                [
+                    today,
+                    str(row_data["home_code"]).strip(),
+                    str(row_data["onboard_date"]).strip(),
+                    old_images,
+                    new_images,
+                    change,
+                    existing_row_number,
+                ]
+            )
 
         new_mp_active = bool_to_sheet(bool(row_data["mp_active"]))
         if existing_row[3].strip().upper() != new_mp_active:
@@ -384,6 +406,8 @@ def mp_build_tracker_job(payload: dict) -> dict:
         worksheet.batch_update(existing_row_updates, value_input_option="USER_ENTERED")
     if existing_live_updates:
         worksheet.batch_update(existing_live_updates, value_input_option="USER_ENTERED")
+    if image_change_log_rows:
+        image_log_worksheet.append_rows(image_change_log_rows, value_input_option="USER_ENTERED")
 
     logger.info("New rows added: %s", new_rows_added)
     logger.info("Rows updated: %s", rows_updated)
